@@ -1,3 +1,12 @@
+
+- name: Print Activities DB schema
+  env:
+    NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+    NOTION_DB_ID: ${{ secrets.NOTION_DB_ID }}
+    Notion-Version: '2025-09-03'
+  run: |
+    python debug_notion_activities_schema.py
+
 from datetime import date, datetime
 from garminconnect import Garmin
 from notion_client import Client
