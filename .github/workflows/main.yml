@@ -3,12 +3,10 @@ name: Sync Garmin to Notion
 
 on:
   schedule:
-    # Run every 15 minutes (GitHub Actions cron is UTC)
     - cron: '*/15 * * * *'
   workflow_dispatch:
 
 env:
-  # Use UK local time inside scripts (handles GMT/BST automatically)
   TZ: 'Europe/London'
 
 concurrency:
@@ -18,25 +16,21 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Cache pip packages
-        uses: actions/cache@v4
+      - uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-
 
-      - name: Create and activate virtual environment
+      - name: Create and activate venv
         shell: bash
         run: |
           set -euo pipefail
@@ -55,55 +49,29 @@ jobs:
           : "${{ secrets.NOTION_SLEEP_DB_ID }}" || (echo "Missing NOTION_SLEEP_DB_ID" && exit 1)
           : "${{ secrets.NOTION_HEALTH_DB_ID }}" || (echo "Missing NOTION_HEALTH_DB_ID" && exit 1)
 
-      # (Optional) Print Sleep DB schema during setup; remove once stable
-      - name: Print Sleep DB schema
-        env:
-          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
-          NOTION_SLEEP_DB_ID: ${{ secrets.NOTION_SLEEP_DB_ID }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          source .venv/bin/activate
-          python - << 'PY'
-          import os, json
-          from notion_client import Client
-          notion = Client(auth=os.environ["NOTION_TOKEN"], notion_version="2025-09-03")
-          db = notion.databases.retrieve(os.environ["NOTION_SLEEP_DB_ID"])
-          title = " / ".join([t["text"]["content"] for t in db.get("title", [])]) or "(untitled)"
-          props = db.get("properties", {})
-          print(f"Sleep DB title: {title}")
-          print(json.dumps({k: {"type": v.get("type"), "id": v.get("id")} for k, v in props.items()},
-                           indent=2, ensure_ascii=False))
-          PY
-
       - name: Run sync scripts
         env:
           GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
           GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
-          NOTION_DB_ID: ${{ secrets.NOTION_DB_ID }}              # Activities DB (if used)
-          NOTION_PR_DB_ID: ${{ secrets.NOTION_PR_DB_ID }}        # PRs DB (if used)
-          NOTION_STEPS_DB_ID: ${{ secrets.NOTION_STEPS_DB_ID }}  # Steps DB (if used)
-          NOTION_SLEEP_DB_ID: ${{ secrets.NOTION_SLEEP_DB_ID }}  # Sleep DB (required)
-          NOTION_HEALTH_DB_ID: ${{ secrets.NOTION_HEALTH_DB_ID }}# Health DB (required)
+          NOTION_DB_ID: ${{ secrets.NOTION_DB_ID }}
+          NOTION_PR_DB_ID: ${{ secrets.NOTION_PR_DB_ID }}
+          NOTION_STEPS_DB_ID: ${{ secrets.NOTION_STEPS_DB_ID }}
+          NOTION_SLEEP_DB_ID: ${{ secrets.NOTION_SLEEP_DB_ID }}
+          NOTION_HEALTH_DB_ID: ${{ secrets.NOTION_HEALTH_DB_ID }}
           TZ: 'Europe/London'
-          # Optional: let sleep_data.py auto-create standard sleep columns if missing
           CREATE_MISSING_SLEEP_PROPERTIES: 'true'
-          # Use current Notion API version header across scripts that read env
           Notion-Version: '2025-09-03'
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p logs
           source .venv/bin/activate
-          # Your existing scripts (keep or remove as you prefer)
-          python garmin-activities.py       2>&1 | tee logs/garmin-activities.log
-          python personal-records.py        2>&1 | tee logs/personal-records.log
-          python daily-steps.py             2>&1 | tee logs/daily-steps.log
-          # Adaptive sleep script (underscore), not the legacy hyphen version
-          python sleep_data.py              2>&1 | tee logs/sleep_data.log
-          # Full health metrics updater (upserts by Date)
-          python health_metrics_all.py      2>&1 | tee logs/health_metrics_all.log
+          python garmin-activities.py  2>&1 | tee logs/garmin-activities.log
+          python personal-records.py   2>&1 | tee logs/personal-records.log
+          python daily-steps.py        2>&1 | tee logs/daily-steps.log
+          python sleep_data.py         2>&1 | tee logs/sleep_data.log
+          python health_metrics_all.py 2>&1 | tee logs/health_metrics_all.log
 
       - name: Upload logs (if present)
         if: success() && hashFiles('logs/*') != ''
