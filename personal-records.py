@@ -156,17 +156,75 @@ def replace_activity_name_by_typeId(typeId):
     }
     return typeId_name_map.get(typeId, "Unnamed Activity")
 
-def get_existing_record(client, database_id, activity_name):
-    query = client.databases.query(
-        database_id=database_id,
-        filter={
-            "and": [
-                {"property": "Record", "title": {"equals": activity_name}},
-                {"property": "PR", "checkbox": {"equals": True}}
-            ]
-        }
-    )
-    return query['results'][0] if query['results'] else None
+
+from notion_client import Client
+
+def get_data_source_id(client: Client, database_id: str) -> str:
+    """
+    Resolve the data source ID for a given database.
+    Implement this based on how you did it in garmin-activities.py.
+    """
+    # Example placeholder: adjust to your actual implementation
+    # If you already have this function elsewhere, import and use that one.
+    ds = client.data_sources.list(parent_id=database_id)  # if supported in your SDK
+    # Fallback: you may need a custom mapping or retrieval call.
+    # Raise a clear error if not found:
+    raise NotImplementedError("Implement get_data_source_id for your workspace")
+
+def query_database_or_datasource(client: Client, database_id: str, filter: dict | None, page_size: int = 1):
+    """
+    Tries data_sources.query first (preferred for newer Notion versions),
+    falls back to databases.query if available.
+    """
+    ds_id = None
+    # Try data_sources.query
+    try:
+        ds_id = get_data_source_id(client, database_id)
+        resp = client.data_sources.query(
+            data_source_id=ds_id,
+            filter=filter,
+            page_size=page_size,
+        )
+        return resp
+    except AttributeError:
+        # notion_client may not have data_sources in older versions
+        pass
+    except Exception as e:
+        # If data_sources exists but fails, we will try databases.query next
+        print("data_sources.query failed, attempting databases.query:", repr(e))
+
+    # Fallback to databases.query if available in this SDK
+    try:
+        # Some SDK versions expose databases.query; some don’t.
+        query_method = getattr(client.databases, "query", None)
+        if query_method is None:
+            raise AttributeError("client.databases.query is not available in this notion_client version")
+        resp = client.databases.query(
+            database_id=database_id,
+            filter=filter,
+            page_size=page_size,
+        )
+        return resp
+    except Exception as e:
+        # Bubble up with clear context
+        raise RuntimeError(f"Notion query failed via both data_sources and databases endpoints: {e}")
+
+def get_existing_record(client: Client, database_id: str, activity_name: str):
+    """
+    Returns a matching PR page by title, or None.
+    Adjust 'Title' to your actual title property (e.g., 'PR Name', 'Activity Name').
+    """
+    # Build a minimal filter by title (exact match). Change property name if your DB uses a different title column.
+    filter_payload = {
+        "property": "Title",   # <-- change this to your exact title property (e.g., 'Activity Name')
+        "title": {"equals": activity_name}
+    }
+
+    # Notion expects {"filter": {...}} or {"filter": {"and": [...]}} depending on your needs.
+    resp = query_database_or_datasource(client, database_id, filter={"and": [filter_payload]}, page_size=1)
+    results = resp.get("results", [])
+    return results[0] if results else None
+``
 
 def get_record_by_date_and_name(client, database_id, activity_date, activity_name):
     query = client.databases.query(
