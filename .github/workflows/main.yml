@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 env:
-  # UK local time for scripts (handles GMT/BST automatically)
+  # Use UK local time inside scripts (handles GMT/BST automatically)
   TZ: 'Europe/London'
 
 concurrency:
@@ -55,16 +55,7 @@ jobs:
           : "${{ secrets.NOTION_SLEEP_DB_ID }}" || (echo "Missing NOTION_SLEEP_DB_ID" && exit 1)
           : "${{ secrets.NOTION_HEALTH_DB_ID }}" || (echo "Missing NOTION_HEALTH_DB_ID" && exit 1)
 
-      - name: Guard against legacy sleep-data.py
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -f "sleep-data.py" ]; then
-            echo "Found legacy sleep-data.py — remove or rename it. Use sleep_data.py instead."
-            exit 1
-          fi
-
-      # (Optional) Print Sleep DB schema for debugging while you finish setup
+      # (Optional) Print Sleep DB schema during setup; remove once stable
       - name: Print Sleep DB schema
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
@@ -90,32 +81,32 @@ jobs:
           GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
           GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
-          NOTION_DB_ID: ${{ secrets.NOTION_DB_ID }}
-          NOTION_PR_DB_ID: ${{ secrets.NOTION_PR_DB_ID }}
-          NOTION_STEPS_DB_ID: ${{ secrets.NOTION_STEPS_DB_ID }}
-          NOTION_SLEEP_DB_ID: ${{ secrets.NOTION_SLEEP_DB_ID }}
-          NOTION_HEALTH_DB_ID: ${{ secrets.NOTION_HEALTH_DB_ID }}
+          NOTION_DB_ID: ${{ secrets.NOTION_DB_ID }}              # Activities DB (if used)
+          NOTION_PR_DB_ID: ${{ secrets.NOTION_PR_DB_ID }}        # PRs DB (if used)
+          NOTION_STEPS_DB_ID: ${{ secrets.NOTION_STEPS_DB_ID }}  # Steps DB (if used)
+          NOTION_SLEEP_DB_ID: ${{ secrets.NOTION_SLEEP_DB_ID }}  # Sleep DB (required)
+          NOTION_HEALTH_DB_ID: ${{ secrets.NOTION_HEALTH_DB_ID }}# Health DB (required)
           TZ: 'Europe/London'
-          # Optional: let sleep_data.py auto-create the standard sleep properties if missing
+          # Optional: let sleep_data.py auto-create standard sleep columns if missing
           CREATE_MISSING_SLEEP_PROPERTIES: 'true'
-          # Use latest Notion API version header (kept here for clarity)
+          # Use current Notion API version header across scripts that read env
           Notion-Version: '2025-09-03'
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p logs
           source .venv/bin/activate
-          # Your existing scripts
+          # Your existing scripts (keep or remove as you prefer)
           python garmin-activities.py       2>&1 | tee logs/garmin-activities.log
           python personal-records.py        2>&1 | tee logs/personal-records.log
           python daily-steps.py             2>&1 | tee logs/daily-steps.log
-          # Adaptive sleep script (underscore)
+          # Adaptive sleep script (underscore), not the legacy hyphen version
           python sleep_data.py              2>&1 | tee logs/sleep_data.log
-          # Full health metrics (upsert by Date)
+          # Full health metrics updater (upserts by Date)
           python health_metrics_all.py      2>&1 | tee logs/health_metrics_all.log
 
-      - name: Upload logs (always)
-        if: always()
+      - name: Upload logs (if present)
+        if: success() && hashFiles('logs/*') != ''
         uses: actions/upload-artifact@v4
         with:
           name: sync-logs
