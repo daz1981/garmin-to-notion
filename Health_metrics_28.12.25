@@ -1,0 +1,198 @@
+
+# health_metrics_all.py
+import os
+import sys
+import requests
+from datetime import datetime
+from zoneinfo import ZoneInfo
+from garminconnect import Garmin
+
+# ---- Env + guards ----
+NOTION_TOKEN = os.environ.get("NOTION_TOKEN")
+NOTION_HEALTH_DB_ID = os.environ.get("NOTION_HEALTH_DB_ID")
+TZ = ZoneInfo(os.environ.get("TZ", "Europe/London"))
+NOTION_VERSION = os.environ.get("Notion-Version", "2025-09-03")  # Notion API version header
+
+if not NOTION_TOKEN:
+    sys.exit("ERROR: NOTION_TOKEN is not set.")
+if not NOTION_HEALTH_DB_ID:
+    sys.exit("ERROR: NOTION_HEALTH_DB_ID is not set. Add it as a GitHub secret and pass it to env.")
+
+def notion_headers():
+    return {
+        "Authorization": f"Bearer {NOTION_TOKEN}",
+        "Content-Type": "application/json",
+        "Notion-Version": NOTION_VERSION,
+    }
+
+def notion_query_by_date(db_id: str, date_iso: str):
+    url = f"https://api.notion.com/v1/databases/{db_id}/query"
+    payload = {"filter": {"property": "Date", "date": {"equals": date_iso}}, "page_size": 1}
+    r = requests.post(url, headers=notion_headers(), json=payload, timeout=30)
+    r.raise_for_status()
+    results = r.json().get("results", [])
+    return results[0]["id"] if results else None
+
+def notion_upsert(db_id: str, props: dict, page_id: str | None, title: str):
+    if page_id:
+        url = f"https://api.notion.com/v1/pages/{page_id}"
+        r = requests.patch(url, headers=notion_headers(), json={"properties": props}, timeout=30)
+    else:
+        url = "https://api.notion.com/v1/pages"
+        payload = {"parent": {"database_id": db_id},
+                   "properties": {"Name": {"title": [{"text": {"content": title}}]}},}
+        payload["properties"].update(props)
+        r = requests.post(url, headers=notion_headers(), json=payload, timeout=30)
+    r.raise_for_status()
+    return r.json()["id"]
+
+def num(x):
+    try: return float(x)
+    except: return None
+
+def pick(d, keys):
+    for k in keys:
+        v = d.get(k)
+        if isinstance(v, (int, float)): return v
+    return None
+
+def main():
+    today = datetime.now(TZ).date().strftime("%Y-%m-%d")
+    title = f"Health {today}"
+
+    client = Garmin(os.environ.get("GARMIN_EMAIL", ""), os.environ.get("GARMIN_PASSWORD", ""))
+    client.login()  # OAuth via Garth; reuses tokens in ~/.garminconnect
+
+    props = {"Date": {"date": {"start": today}}}
+
+    # --- Resting HR ---
+    try:
+        rhr = client.get_rhr_data(today) or {}
+        props["Resting HR"] = {"number": num(pick(rhr, ["restingHeartRate", "value"]))}
+    except: pass
+
+    # --- Respiration ---
+    try:
+        resp = client.get_respiration_data(today) or {}
+        props["Respiration avg"] = {"number": num(pick(resp, ["avgBreathsPerMin", "average"]))}
+    except: pass
+
+    # --- SpO2 ---
+    try:
+        spo2 = client.get_spo2_data(today) or {}
+        props["SpO2 avg"] = {"number": num(pick(spo2, ["avgValue", "averageSpO2"]))}
+    except: pass
+
+    # --- Calories (daily stats) ---
+    try:
+        stats = client.get_stats(today) or {}
+        props["Calories"] = {"number": num(pick(stats, ["totalKilocalories", "caloriesTotal"]))}
+    except: pass
+
+    # --- Body Battery (min/avg/max) ---
+    try:
+        bb = client.get_body_battery(today, today) or []
+        vals = [v.get("value") for v in bb if isinstance(v, dict) and isinstance(v.get("value"), (int, float))]
+        if vals:
+            props["Body Battery min"] = {"number": num(min(vals))}
+            props["Body Battery avg"] = {"number": round(sum(vals)/len(vals), 2)}
+            props["Body Battery max"] = {"number": num(max(vals))}
+    except: pass
+
+    # --- Stress ---
+    try:
+        stress = client.get_stress_data(today) or {}
+        props["Stress avg"] = {"number": num(pick(stress, ["avgStressLevel", "averageStressLevel"]))}
+        props["Stress max"] = {"number": num(pick(stress, ["maxStressLevel", "maxStress"]))}
+    except: pass
+
+    # --- HRV (daily/nightly avg best effort) ---
+    try:
+        hrv = client.get_hrv_data(today) or {}
+        avg = None
+        if isinstance(hrv.get("hrvSummary"), dict):
+            avg = pick(hrv["hrvSummary"], ["lastNightAvg", "avg", "average"])
+        else:
+            avg = pick(hrv, ["lastNightAvg", "avg", "hrvValue", "average"])
+        if avg is not None:
+            props["HRV (ms)"] = {"number": num(avg)}
+    except: pass
+
+    # --- Training Readiness + components ---
+    try:
+        tr = client.get_training_readiness_data(today) or {}
+        props["Training Readiness"] = {"number": num(pick(tr, ["trainingReadinessScore", "score"]))}
+        comps = tr.get("trainingReadinessScores") or tr.get("componentScores") or {}
+        props["TR Sleep"] = {"number": num(pick(comps, ["sleep", "sleepScore"]))}
+        props["TR Recovery"] = {"number": num(pick(comps, ["recovery", "recoveryScore"]))}
+        props["TR HRV"] = {"number": num(pick(comps, ["hrv", "hrvScore"]))}
+        props["TR Acute Load"] = {"number": num(pick(comps, ["acuteLoad", "acuteLoadScore"]))}
+        props["TR Stress"] = {"number": num(pick(comps, ["stress", "stressScore"]))}
+        props["TR Resting HR"] = {"number": num(pick(comps, ["restingHr", "restingHrScore"]))}
+    except: pass
+
+    # --- Training Status ---
+    try:
+        ts = client.get_training_status(today) or {}
+        label = ts.get("trainingStatus") or ts.get("status")
+        if label:
+            props["Training Status"] = {"select": {"name": str(label)}}
+    except: pass
+
+    # --- VO2 Max & Fitness Age ---
+    try:
+        maxm = client.get_max_metrics(today) or {}
+        vo2 = pick(maxm, ["vo2MaxValue", "vo2Max", "value"])
+        fa = pick(maxm, ["fitnessAge", "fitnessAgeValue"])
+        if vo2 is not None: props["VO2 Max"] = {"number": num(vo2)}
+        if fa is not None: props["Fitness Age"] = {"number": num(fa)}
+    except: pass
+
+    # --- Hill Score / Endurance Score ---
+    try:
+        hill = client.get_hill_score_data(today, today) or {}
+        hs = pick(hill, ["currentScore", "score"])
+        if hs is not None: props["Hill Score"] = {"number": num(hs)}
+    except: pass
+
+    try:
+        en = client.get_endurance_score_data(today, today) or {}
+        es = pick(en, ["currentScore", "score"])
+        if es is not None: props["Endurance Score"] = {"number": num(es)}
+    except: pass
+
+    # --- Hydration ---
+    try:
+        hyd = client.get_hydration_data(today) or {}
+        props["Hydration (ml)"] = {"number": num(pick(hyd, ["totalHydrationMl", "hydrationAmount"]))}
+    except: pass
+
+    # --- Blood pressure (latest sample) ---
+    try:
+        bp = client.get_blood_pressure_data(today, today) or {}
+        if isinstance(bp, list) and bp:
+            m = bp[-1]
+            props["Systolic"] = {"number": num(m.get("systolic"))}
+            props["Diastolic"] = {"number": num(m.get("diastolic"))}
+        elif isinstance(bp, dict):
+            props["Systolic"] = {"number": num(bp.get("systolic"))}
+            props["Diastolic"] = {"number": num(bp.get("diastolic"))}
+    except: pass
+
+    # --- Body composition / Weight (latest sample) ---
+    try:
+        bc = client.get_body_composition_data(today) or {}
+        samples = bc if isinstance(bc, list) else bc.get("samples") or []
+        if samples:
+            s = samples[-1]
+            props["Weight (kg)"] = {"number": num(pick(s, ["weight", "weightKg"]))}
+            props["Body Fat (%)"] = {"number": num(pick(s, ["bodyFat", "bodyFatPercent"]))}
+    except: pass
+
+    # Upsert in Notion
+    page_id = notion_query_by_date(NOTION_HEALTH_DB_ID, today)
+    saved = notion_upsert(NOTION_HEALTH_DB_ID, props, page_id, title)
+    print(f"[health/all] Upserted page {saved} for {today}")
+
+if __name__ == "__main__":
+    main()
