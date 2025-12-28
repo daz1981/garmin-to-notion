@@ -138,37 +138,36 @@ def format_pace(average_speed):
     else:
         return ""
     
-def activity_exists(client, database_id, activity_date, activity_type, activity_name):
 
-    # Check if an activity already exists in the Notion database and return it if found.
+def activity_exists(notion_client: Client, database_id: str, activity_date: str, activity_type: str, activity_name: str):
+    """
+    Returns the first matching page or None.
 
-    # Handle the activity_type which is now a tuple
-    if isinstance(activity_type, tuple):
-        main_type, _ = activity_type
-    else:
-        main_type = activity_type[0] if isinstance(activity_type, (list, tuple)) else activity_type
-    
-    # Determine the correct activity type for the lookup
-    lookup_type = "Stretching" if "stretch" in activity_name.lower() else main_type
-    
-   
-# get the data source id once per DB you query
-ds_id = get_data_source_id(notion, database_id)   # or get_data_source_id(client, database_id)
+    - notion_client: Notion SDK client (notion_client.Client)
+    - database_id: Notion database ID (the 32-char UUID)
+    - activity_date: 'YYYY-MM-DD' (string)
+    - activity_type: e.g., 'Run', 'Ride' (select value)
+    - activity_name: exact title text to match (string)
+    """
+    # Get data source ID for the database (required with Notion-Version 2025-09-03)
+    ds_id = get_data_source_id(notion_client, database_id)
 
-query = notion.data_sources.query(
-    data_source_id=ds_id,
-    filter={
-        "and": [
-            {"property": "Date", "date": {"equals": activity_date}},
-            {"property": "Type", "select": {"equals": activity_type}},
-            {"property": "Name", "title": {"equals": activity_name}},
-        ]
-    },
-    page_size=1,
-)
-results = query.get("results", [])
+    # Query via data_sources.query (future-proof)
+    resp = notion_client.data_sources.query(
+        data_source_id=ds_id,
+        filter={
+            "and": [
+                {"property": "Date", "date": {"equals": activity_date}},
+                {"property": "Type", "select": {"equals": activity_type}},
+                {"property": "Name", "title": {"equals": activity_name}},
+            ]
+        },
+        page_size=1,
+    )
 
+    results = resp.get("results", [])
     return results[0] if results else None
+
 
 
 def activity_needs_update(existing_activity, new_activity):
