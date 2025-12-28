@@ -151,17 +151,23 @@ def activity_exists(client, database_id, activity_date, activity_type, activity_
     # Determine the correct activity type for the lookup
     lookup_type = "Stretching" if "stretch" in activity_name.lower() else main_type
     
-    query = client.databases.query(
-        database_id=database_id,
-        filter={
-            "and": [
-                {"property": "Date", "date": {"equals": activity_date.split('T')[0]}},
-                {"property": "Activity Type", "select": {"equals": lookup_type}},
-                {"property": "Activity Name", "title": {"equals": activity_name}}
-            ]
-        }
-    )
-    results = query['results']
+   
+# get the data source id once per DB you query
+ds_id = get_data_source_id(notion, database_id)   # or get_data_source_id(client, database_id)
+
+query = notion.data_sources.query(
+    data_source_id=ds_id,
+    filter={
+        "and": [
+            {"property": "Date", "date": {"equals": activity_date}},
+            {"property": "Type", "select": {"equals": activity_type}},
+            {"property": "Name", "title": {"equals": activity_name}},
+        ]
+    },
+    page_size=1,
+)
+results = query.get("results", [])
+
     return results[0] if results else None
 
 
