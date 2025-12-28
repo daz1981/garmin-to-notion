@@ -224,7 +224,6 @@ def get_existing_record(client: Client, database_id: str, activity_name: str):
     resp = query_database_or_datasource(client, database_id, filter={"and": [filter_payload]}, page_size=1)
     results = resp.get("results", [])
     return results[0] if results else None
-``
 
 def get_record_by_date_and_name(client, database_id, activity_date, activity_name):
     query = client.databases.query(
