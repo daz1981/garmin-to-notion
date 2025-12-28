@@ -1,3 +1,24 @@
+
+from notion_client import Client
+import os
+
+# Ensure you construct the Notion client with the current API version
+NOTION_VERSION = os.environ.get("Notion-Version", "2025-09-03")
+# notion = Client(auth=NOTION_TOKEN, notion_version=NOTION_VERSION)  # wherever you build it
+
+def get_data_source_id(notion: Client, database_id: string) -> str:
+    """
+    Retrieve the first data source ID for a given database.
+    Works with Notion-Version 2025-09-03 where queries use data_sources.query.
+    """
+    db = notion.databases.retrieve(database_id)   # returns DB metadata + data_sources[]
+    sources = db.get("data_sources", [])
+    if not sources:
+        raise RuntimeError(
+            f"No data source found for database {database_id}. "
+            "Open the DB in Notion and ensure your integration is connected (Share → Add connections)."
+        )
+    return sources[0]["id"]
 from datetime import datetime, timezone
 from garminconnect import Garmin
 from notion_client import Client
