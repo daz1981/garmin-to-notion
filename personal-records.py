@@ -4,6 +4,22 @@ from notion_client import Client
 import os
 from notion_client import Client
 
+def print_schema(client: Client, database_id: str):
+    """
+    Prints the Notion property names and types used by your data source or database.
+    """
+    try:
+        ds_id = get_data_source_id(client, database_id)
+        schema = client.data_sources.retrieve(data_source_id=ds_id)
+        source = "data source"
+    except Exception:
+        schema = client.databases.retrieve(database_id=database_id)
+        source = "database"
+
+    print(f"Resolved {source} schema for {database_id}:")
+    for name, meta in schema.get("properties", {}).items():
+        print(f"  - {name} (type={meta.get('type')})")
+
 def query_via_data_source(client: Client, database_id: str, filter_payload: dict | None, page_size: int = 1):
     """
     Query the Notion database via its Data Source. Do not swallow exceptions:
