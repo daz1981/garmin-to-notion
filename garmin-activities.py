@@ -376,5 +376,13 @@ def main():
             create_activity(client, database_id, activity)
             # print(f"Created: {activity_type} - {activity_name}")
 
-if __name__ == '__main__':
-    main()
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:
+        import traceback
+        print("Sync failed:", repr(e))
+        traceback.print_exc()
+        raise  # Re-raise so GitHub Actions marks the job as failed
+
