@@ -379,5 +379,13 @@ def main():
             write_new_record(client, database_id, activity_date, activity_type, activity_name, typeId, value, pace)
             print(f"Successfully written new record: {activity_type} - {activity_name}")
 
-if __name__ == '__main__':
-    main()
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:
+        import traceback
+        print("Sync failed:", repr(e))
+        traceback.print_exc()
+        raise  # Re-raise so GitHub Actions marks the job as failed
+
