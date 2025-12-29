@@ -1,13 +1,34 @@
 
 import os
 from notion_client import Client
-
+from datetime import datetime, timezone
+from garminconnect import Garmin
+from notion_client import Client
+from dotenv import load_dotenv
+import pytz
+import os
 # Use the current Notion API version header (future-proof)
 NOTION_VERSION = os.environ.get("Notion-Version", "2025-09-03")
 
 # Build the Notion client once and reuse
 NOTION_TOKEN = os.environ.get("NOTION_TOKEN")
 notion = Client(auth=NOTION_TOKEN, notion_version=NOTION_VERSION)
+
+def print_schema(client: Client, database_id: str):
+    """
+    Prints the Notion property names and types used by your data source or database.
+    """
+    try:
+        ds_id = get_data_source_id(client, database_id)
+        schema = client.data_sources.retrieve(data_source_id=ds_id)
+        source = "data source"
+    except Exception:
+        schema = client.databases.retrieve(database_id=database_id)
+        source = "database"
+
+    print(f"Resolved {source} schema for {database_id}:")
+    for name, meta in schema.get("properties", {}).items():
+        print(f"  - {name} (type={meta.get('type')})")
 
 def get_data_source_id(notion: Client, database_id: str) -> str:
     """
@@ -28,15 +49,10 @@ def get_data_source_id(notion: Client, database_id: str) -> str:
         )
     return sources[0]["id"]
 
-from datetime import datetime, timezone
-from garminconnect import Garmin
-from notion_client import Client
-from dotenv import load_dotenv
-import pytz
-import os
+
 
 # Your local time zone, replace with the appropriate one if needed
-local_tz = pytz.timezone('America/Toronto')
+local_tz = pytz.timezone('Europe/London')
 
 ACTIVITY_ICONS = {
     "Barre": "https://img.icons8.com/?size=100&id=66924&format=png&color=000000",
@@ -140,72 +156,16 @@ def format_pace(average_speed):
 from notion_client import Client
 
 def resolve_schema(notion_client: Client, database_id: str, ds_id: str):
-    # Prefer data source schema if you’ll query via data_sources
-    try:
-        schema = notion_client.data_sources.retrieve(data_source_id=ds_id)
-    except Exception:
-        schema = notion_client.databases.retrieve(database_id=database_id)
-    return schema.get("properties", {}) if schema else {}
-
-def pick_property(props: dict, canonical: str, candidates: list[str], expected_types: list[str] | None = None):
-    names = [canonical] + candidates
-    for name in names:
-        meta = props.get(name)
-        if not meta:
-            continue
-        if expected_types and meta.get("type") not in expected_types:
-            continue
-        return name, meta.get("type")
-    return None, None
-
-def activity_exists(notion_client: Client, database_id: str, activity_date: str, activity_type: str, activity_name: str):
-    ds_id = get_data_source_id(notion_client, database_id)
-    props = resolve_schema(notion_client, database_id, ds_id)
-
-    # Try common variants (adjust candidates to match what you actually have in Notion)
-    date_name,  date_type  = pick_property(props, "Date", ["Activity Date"], ["date"])
-    type_name,  type_type  = pick_property(props, "Activity Type", ["Type", "Workout Type"], ["select", "multi_select"])
-    title_name, title_type = pick_property(props, "Activity Name", ["Name", "Title"], ["title"])
-
-    filters = []
-
-    if date_name:
-        filters.append({"property": date_name, "date": {"equals": activity_date}})
-    else:
-        print("Warning: No 'Date' property of type 'date' found; skipping date filter.")
-
-    if type_name and type_type == "select":
-        filters.append({"property": type_name, "select": {"equals": activity_type}})
-    elif type_name and type_type == "multi_select":
-        filters.append({"property": type_name, "multi_select": {"contains": activity_type}})
-    else:
-        print("Warning: No compatible 'Activity Type' property found; skipping type filter.")
-
-    if title_name:
-        filters.append({"property": title_name, "title": {"equals": activity_name}})
-    else:
-        print("Warning: No title property found; skipping title filter.")
-
-    resp = notion_client.data_sources.query(
-        data_source_id=ds_id,
-        filter={"and": filters} if filters else None,
-        page_size=1,
-    )
-    results = resp.get("results", [])
-    return results[0] if results else None
-   
-
-
-from notion_client import Client
-
-def resolve_schema(notion_client: Client, database_id: str, ds_id: str):
     """
     Returns a dict of properties for the data source (preferred) or the database schema.
     """
     try:
         schema = notion_client.data_sources.retrieve(data_source_id=ds_id)
+        source = "data source"
     except Exception:
         schema = notion_client.databases.retrieve(database_id=database_id)
+        source = "database"
+    print(f"[Notion] Loaded schema from {source}")
     return schema.get("properties", {}) if schema else {}
 
 def pick_property(props: dict, canonical: str, candidates: list[str], expected_types: list[str] | None = None):
@@ -225,23 +185,20 @@ def pick_property(props: dict, canonical: str, candidates: list[str], expected_t
 
 def activity_exists(notion_client: Client, database_id: str, activity_date: str, activity_type: str, activity_name: str):
     """
-    Returns the first matching page or None by querying the data source (preferred).
+    Returns the first matching page or None by querying the data source.
     Aligns property names and operators to the actual schema to avoid 400 errors.
     """
     ds_id = get_data_source_id(notion_client, database_id)
     props = resolve_schema(notion_client, database_id, ds_id)
 
-    # Adjust candidates to the names you actually use in Notion
+    # Adjust candidates to match YOUR Notion DB names
     date_name,  date_type  = pick_property(props, "Date", ["Activity Date"], ["date"])
     type_name,  type_type  = pick_property(props, "Activity Type", ["Type", "Workout Type"], ["select", "multi_select"])
     title_name, title_type = pick_property(props, "Activity Name", ["Name", "Title"], ["title"])
 
     filters = []
-
     if date_name:
         filters.append({"property": date_name, "date": {"equals": activity_date}})
-    else:
-        print("Warning: No 'Date' property of type 'date' found; skipping date filter.")
 
     if type_name and type_type == "select":
         filters.append({"property": type_name, "select": {"equals": activity_type}})
@@ -262,9 +219,7 @@ def activity_exists(notion_client: Client, database_id: str, activity_date: str,
     )
     results = resp.get("results", [])
     return results[0] if results else None
-
-
-
+ 
 
 def activity_needs_update(existing_activity, new_activity):
     existing_props = existing_activity['properties']
