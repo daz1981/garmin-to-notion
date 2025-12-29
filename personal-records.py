@@ -2,6 +2,20 @@ from datetime import date, datetime
 from garminconnect import Garmin
 from notion_client import Client
 import os
+from notion_client import Client
+
+def query_via_data_source(client: Client, database_id: str, filter_payload: dict | None, page_size: int = 1):
+    """
+    Query the Notion database via its Data Source. Do not swallow exceptions:
+    we want to see real errors (e.g., 400 Bad Request) to fix property mismatches.
+    """
+    ds_id = get_data_source_id(client, database_id)
+    print(f"[Notion] Querying data source {ds_id} (database {database_id}) with filter={filter_payload}")
+    return client.data_sources.query(
+        data_source_id=ds_id,
+        filter=filter_payload,
+        page_size=page_size,
+    )
 
 def get_icon_for_record(activity_name):
     icon_map = {
@@ -209,33 +223,36 @@ def query_database_or_datasource(client: Client, database_id: str, filter: dict 
         # Bubble up with clear context
         raise RuntimeError(f"Notion query failed via both data_sources and databases endpoints: {e}")
 
+
 def get_existing_record(client: Client, database_id: str, activity_name: str):
     """
-    Returns a matching PR page by title, or None.
-    Adjust 'Title' to your actual title property (e.g., 'PR Name', 'Activity Name').
+    Returns the first PR page whose title equals `activity_name`.
+    CHANGE `title_property` to your exact title column name (case-sensitive).
     """
-    # Build a minimal filter by title (exact match). Change property name if your DB uses a different title column.
+    title_property = "Record"  # <-- change if your title column is named "Name" or "Activity Name"
     filter_payload = {
-        "property": "Title",   # <-- change this to your exact title property (e.g., 'Activity Name')
-        "title": {"equals": activity_name}
+        "and": [
+            {"property": title_property, "title": {"equals": activity_name}},
+        ]
     }
 
-    # Notion expects {"filter": {...}} or {"filter": {"and": [...]}} depending on your needs.
-    resp = query_database_or_datasource(client, database_id, filter={"and": [filter_payload]}, page_size=1)
+    resp = query_via_data_source(client, database_id, filter_payload, page_size=1)
     results = resp.get("results", [])
     return results[0] if results else None
 
-def get_record_by_date_and_name(client, database_id, activity_date, activity_name):
-    query = client.databases.query(
-        database_id=database_id,
-        filter={
-            "and": [
-                {"property": "Record", "title": {"equals": activity_name}},
-                {"property": "Date", "date": {"equals": activity_date}}
-            ]
-        }
-    )
-    return query['results'][0] if query['results'] else None
+
+def get_record_by_date_and_name(client: Client, database_id: str, activity_date: str, activity_name: str):
+    title_property = "Record"  # <-- change to your actual title column name
+    filter_payload = {
+        "and": [
+            {"property": title_property, "title": {"equals": activity_name}},
+            {"property": "Date", "date": {"equals": activity_date}},
+        ]
+    }
+    resp = query_via_data_source(client, database_id, filter_payload, page_size=1)
+    results = resp.get("results", [])
+    return results[0] if results else None
+
 
 def update_record(client, page_id, activity_date, value, pace, activity_name, is_pr=True):
     properties = {
