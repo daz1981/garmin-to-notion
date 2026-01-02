@@ -189,18 +189,32 @@ def replace_activity_name_by_typeId(typeId):
 
 from notion_client import Client
 
-def get_data_source_id(client: Client, database_id: str) -> str:
+def get_data_source_id(client, database_id):
     """
-    Resolve the data source ID for a given database.
-    Implement this based on how you did it in garmin-activities.py.
+    Get the data source ID from a database.
+    The Notion SDK doesn't have a direct list method, so we retrieve
+    the database object which contains data source information.
     """
-    # Example placeholder: adjust to your actual implementation
-    # If you already have this function elsewhere, import and use that one.
-    ds = client.data_sources.list(parent_id=database_id)  # if supported in your SDK
-    # Fallback: you may need a custom mapping or retrieval call.
-    # Raise a clear error if not found:
-    raise NotImplementedError("Implement get_data_source_id for your workspace")
-
+    try:
+        # Retrieve the database object
+        database = client.databases.retrieve(database_id=database_id)
+        
+        # Extract data source ID from the database object
+        # Notion databases typically have a 'id' field that is the data source
+        if hasattr(database, 'id'):
+            return database['id']
+        
+        # Alternative: if the database has a data_source property
+        if 'data_source' in database:
+            return database['data_source']['id']
+            
+        # Fallback: return the database_id itself as it may be the data source
+        return database_id
+        
+    except Exception as e:
+        print(f"[Error] Could not retrieve data source ID: {e}")
+        # Fallback to using database_id as data source ID
+        return database_id
 def query_database_or_datasource(client: Client, database_id: str, filter: dict | None, page_size: int = 1):
     """
     Tries data_sources.query first (preferred for newer Notion versions),
