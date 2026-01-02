@@ -32,6 +32,60 @@ def get_db_props(db_id: str) -> dict:
     db = notion.databases.retrieve(db_id)
     return db.get("properties", {})
 
+# notion_helpers.py
+from typing import Optional, Dict, Tuple
+from notion_client import Client, APIResponseError
+
+# Simple in-process cache
+_DS_CACHE: Dict[str, Tuple[str, str]] = {}
+
+def get_data_source_id(
+    client: Client,
+    database_id: str,
+    prefer_name: Optional[str] = None
+) -> str:
+    """
+    Resolve the data_source_id for a given Notion database (container).
+    Optionally pick a data source by name. Caches the result.
+    """
+    cached = _DS_CACHE.get(database_id)
+    if cached and (prefer_name is None or cached[1] == prefer_name):
+        return cached[0]
+
+    try:
+        # In Notion 2025-09-03, databases.retrieve returns a container
+        # object that includes a 'data_sources' array (id + name).
+        db = client.databases.retrieve(database_id=database_id)
+    except APIResponseError as e:
+        raise RuntimeError(
+            "Could not retrieve the database container from Notion. "
+            "Check that the ID is a *database* ID (from the DB page URL), "
+            "not a page/view/link ID, and that the database is shared with your integration."
+        ) from e
+
+    data_sources = db.get("data_sources") or []
+    if not data_sources:
+        raise RuntimeError(
+            "No data sources found (or no permission). Make sure this is the ORIGINAL database "
+            "(not a linked view) and that your integration is added via ⋯ → Connections."
+        )
+
+    chosen = None
+    if prefer_name:
+        for ds in data_sources:
+            if ds.get("name") == prefer_name:
+                chosen = ds
+                break
+        if not chosen:
+            names = ", ".join(ds.get("name", "〈unnamed〉") for ds in data_sources)
+            raise RuntimeError(f"Data source named '{prefer_name}' not found. Available: {names}")
+    else:
+        chosen = data_sources[0]
+
+    ds_id = chosen["id"]
+    _DS_CACHE[database_id] = (ds_id, chosen.get("name", ""))
+    return ds_id
+
 def find_title_prop(props: dict) -> str:
     """Find the database's Title property key (often 'Name')."""
     for key, val in props.items():
