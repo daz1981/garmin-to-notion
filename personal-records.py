@@ -188,13 +188,14 @@ def replace_activity_name_by_typeId(typeId):
 
 
 from notion_client import Client
-
 def get_data_source_id(client, database_id):
     """
     For Notion databases, the database ID is the data source ID.
-    No need to retrieve - just return it directly.
+    Return it directly to preserve the original format from environment variables.
+    This avoids UUID reformatting issues with the Notion API.
     """
     return database_id
+
 def query_database_or_datasource(client: Client, database_id: str, filter: dict | None, page_size: int = 1):
     """
     Tries data_sources.query first (preferred for newer Notion versions),
